@@ -1,0 +1,520 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum DatasetStatus {
+  AVAILABLE
+  DOWNLOADING
+  PROCESSING
+  IMPORTED
+  PARTIALLY_IMPORTED
+  FAILED
+}
+
+enum StorageKind {
+  POSTGRESQL
+  FILE_STORAGE
+  HYBRID
+}
+
+enum CompatibilityStatus {
+  READY
+  READY_WITH_MAPPING
+  NOT_COMPATIBLE
+}
+
+enum NodeType {
+  POWER
+  WATER
+  HEALTHCARE
+  TELECOM
+  EMERGENCY
+  TRANSIT
+  OTHER
+}
+
+enum NodeStatus {
+  OPERATIONAL
+  DEGRADED
+  FAILED
+}
+
+enum ScenarioStatus {
+  DRAFT
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum RunStatus {
+  QUEUED
+  RUNNING
+  PAUSED
+  COMPLETED
+  FAILED
+}
+
+enum InterventionStatus {
+  PROPOSED
+  APPLIED
+  REJECTED
+}
+
+enum Severity {
+  INFO
+  WARNING
+  ERROR
+  CRITICAL
+}
+
+enum EventType {
+  FAILURE
+  DEGRADATION
+  OVERLOAD
+  ANOMALY
+  MAINTENANCE
+}
+
+model User {
+  id           String      @id @default(cuid())
+  email        String      @unique
+  displayName  String
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  projects     Project[]
+  auditLogs    AuditLog[]
+  errorEvents  ErrorEvent[]
+}
+
+model Project {
+  id              String    @id @default(cuid())
+  ownerId         String?
+  name            String
+  description     String?
+  activeDatasetId String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  owner           User?     @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  activeDataset   Dataset?  @relation("ActiveDataset", fields: [activeDatasetId], references: [id], onDelete: SetNull)
+  datasets        Dataset[] @relation("ProjectDatasets")
+  scenarios       Scenario[]
+  auditLogs       AuditLog[]
+  @@index([ownerId, updatedAt])
+  @@index([activeDatasetId])
+}
+
+model Dataset {
+  id                   String              @id @default(cuid())
+  projectId            String?
+  parentDatasetId      String?
+  name                 String
+  description          String?
+  provider             String
+  sourceUrl            String?
+  documentationUrl     String?
+  license              String?
+  category             String?
+  datasetType          String?
+  format               String?
+  sizeBytes            BigInt?
+  nodeCount            Int                 @default(0)
+  edgeCount            Int                 @default(0)
+  isTemporal           Boolean             @default(false)
+  isDirected           Boolean             @default(true)
+  isWeighted           Boolean             @default(false)
+  status               DatasetStatus       @default(AVAILABLE)
+  storage              StorageKind         @default(FILE_STORAGE)
+  compatibility        CompatibilityStatus @default(READY_WITH_MAPPING)
+  compatibilityDetails Json?
+  checksum             String?
+  storageLocation      String?
+  provenance           Json?
+  isCatalog            Boolean             @default(false)
+  isUserUpload         Boolean             @default(false)
+  isProjectCopy        Boolean             @default(false)
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+  project              Project?            @relation("ProjectDatasets", fields: [projectId], references: [id], onDelete: Cascade)
+  activeForProjects    Project[]           @relation("ActiveDataset")
+  parentDataset        Dataset?            @relation("DatasetVersions", fields: [parentDatasetId], references: [id], onDelete: SetNull)
+  versions             Dataset[]           @relation("DatasetVersions")
+  sources              DatasetSource[]
+  files                DatasetFile[]
+  imports              DatasetImport[]
+  schemas              DatasetSchema[]
+  mappings             DatasetMapping[]
+  ingestionRuns        DataIngestionRun[]
+  nodes                Node[]
+  dependencies         Dependency[]
+  scenarios            Scenario[]
+  auditLogs            AuditLog[]
+  errorEvents          ErrorEvent[]
+  @@index([projectId, updatedAt])
+  @@index([provider, category])
+  @@unique([provider, sourceUrl])
+  @@index([status, compatibility])
+  @@index([parentDatasetId])
+}
+
+model DatasetSource {
+  id          String   @id @default(cuid())
+  datasetId   String
+  name        String
+  sourceType  String
+  url         String?
+  provenance  Json?
+  createdAt   DateTime @default(now())
+  dataset     Dataset  @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  imports     DatasetImport[]
+  @@index([datasetId])
+}
+
+model DatasetFile {
+  id            String   @id @default(cuid())
+  datasetId     String
+  originalName  String
+  storedName    String
+  mimeType      String?
+  sizeBytes     BigInt
+  checksum      String
+  storagePath   String
+  isRaw         Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  dataset       Dataset  @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  @@index([datasetId, createdAt])
+}
+
+model DatasetImport {
+  id           String        @id @default(cuid())
+  datasetId    String
+  sourceId     String?
+  status       DatasetStatus
+  rowCount     Int           @default(0)
+  bytesRead    BigInt        @default(0)
+  bytesTotal   BigInt?
+  errorMessage String?
+  startedAt    DateTime      @default(now())
+  completedAt  DateTime?
+  dataset      Dataset       @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  source       DatasetSource? @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+  ingestionRuns DataIngestionRun[]
+  @@index([datasetId, startedAt])
+  @@index([status, startedAt])
+}
+
+model DatasetSchema {
+  id              String   @id @default(cuid())
+  datasetId       String
+  importId        String?
+  fields          Json
+  delimiter       String?
+  hasHeader       Boolean  @default(true)
+  detectedAt      DateTime @default(now())
+  dataset         Dataset  @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  @@index([datasetId, detectedAt])
+}
+
+model DatasetMapping {
+  id          String   @id @default(cuid())
+  datasetId   String
+  name        String   @default("Default mapping")
+  mapping     Json
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  dataset     Dataset  @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  @@index([datasetId, isActive])
+}
+
+model DataIngestionRun {
+  id            String    @id @default(cuid())
+  datasetId     String
+  importId      String?
+  status        RunStatus @default(QUEUED)
+  phase         String
+  rowsProcessed Int       @default(0)
+  rowsRejected  Int       @default(0)
+  message       String?
+  startedAt     DateTime  @default(now())
+  completedAt   DateTime?
+  dataset       Dataset   @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  import        DatasetImport? @relation(fields: [importId], references: [id], onDelete: SetNull)
+  @@index([datasetId, startedAt])
+}
+
+model Node {
+  id               String      @id @default(cuid())
+  datasetId        String
+  name             String
+  code             String
+  type             NodeType    @default(OTHER)
+  status           NodeStatus  @default(OPERATIONAL)
+  criticality      Float       @default(0.5)
+  capacity         Float       @default(100)
+  currentLoad      Float       @default(0)
+  health           Float       @default(1)
+  failureThreshold Float       @default(0.8)
+  metadata         Json?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+  dataset          Dataset     @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  outgoing         Dependency[] @relation("fromNode")
+  incoming         Dependency[] @relation("toNode")
+  attributes       NodeAttribute[]
+  observations     NodeObservation[]
+  cascadePaths     CascadePath[]
+  results          SimulationResult[]
+  triggerEvents    ScenarioEvent[]
+  @@unique([datasetId, code])
+  @@index([datasetId, type])
+  @@index([datasetId, status])
+}
+
+model Dependency {
+  id                     String   @id @default(cuid())
+  datasetId              String
+  fromNodeId             String
+  toNodeId               String
+  strength               Float    @default(0.7)
+  propagationProbability Float    @default(0.7)
+  propagationDelay       Int      @default(15)
+  relationship           String
+  metadata               Json?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+  dataset                Dataset  @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  fromNode               Node     @relation("fromNode", fields: [fromNodeId], references: [id], onDelete: Cascade)
+  toNode                 Node     @relation("toNode", fields: [toNodeId], references: [id], onDelete: Cascade)
+  candidates             InterventionCandidate[]
+  @@unique([datasetId, fromNodeId, toNodeId])
+  @@index([datasetId, fromNodeId])
+  @@index([datasetId, toNodeId])
+}
+
+model NodeAttribute {
+  id        String   @id @default(cuid())
+  nodeId    String
+  key       String
+  value     String
+  createdAt DateTime @default(now())
+  node      Node     @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  @@unique([nodeId, key])
+}
+
+model NodeObservation {
+  id         String   @id @default(cuid())
+  nodeId     String
+  metric     String
+  value      Float
+  unit       String
+  observedAt DateTime @default(now())
+  source     String
+  metadata   Json?
+  node       Node     @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  @@index([nodeId, observedAt])
+}
+
+model Scenario {
+  id              String         @id @default(cuid())
+  projectId       String
+  datasetId       String
+  name            String
+  description     String?
+  triggerNodeId   String?
+  triggerSeverity Float          @default(0.8)
+  triggerType     EventType      @default(FAILURE)
+  scheduledFor    DateTime?
+  durationMinutes Int?
+  affectedParameter String?
+  status          ScenarioStatus @default(DRAFT)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  project         Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  dataset         Dataset        @relation(fields: [datasetId], references: [id], onDelete: Restrict)
+  events          ScenarioEvent[]
+  predictions     CascadePrediction[]
+  runs            SimulationRun[]
+  interventions   Intervention[]
+  errorEvents     ErrorEvent[]
+  @@index([projectId, createdAt])
+  @@index([datasetId, status])
+}
+
+model ScenarioEvent {
+  id          String    @id @default(cuid())
+  scenarioId  String
+  nodeId      String
+  eventType   EventType
+  severity    Float
+  occurredAt  DateTime  @default(now())
+  scenario    Scenario  @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+  node        Node      @relation(fields: [nodeId], references: [id], onDelete: Restrict)
+  @@index([scenarioId, occurredAt])
+}
+
+model SimulationRun {
+  id              String    @id @default(cuid())
+  scenarioId      String
+  status          RunStatus @default(QUEUED)
+  isBaseline      Boolean   @default(false)
+  modelName       String
+  inputSnapshot   Json?
+  startedAt       DateTime  @default(now())
+  completedAt     DateTime?
+  scenario        Scenario  @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+  results         SimulationResult[]
+  appliedInterventions AppliedIntervention[] @relation("AfterRun")
+  baselineFor     AppliedIntervention[] @relation("BaselineRun")
+  @@index([scenarioId, startedAt])
+}
+
+model SimulationResult {
+  id           String        @id @default(cuid())
+  runId        String
+  nodeId       String
+  affected     Boolean
+  state        NodeStatus   @default(OPERATIONAL)
+  impactScore  Float
+  probability  Float
+  critical     Boolean
+  reason       String
+  timeOffset   Int          @default(0)
+  sourceData   Json?
+  run          SimulationRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  node         Node          @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  @@unique([runId, nodeId])
+  @@index([nodeId, probability])
+}
+
+model CascadePrediction {
+  id              String   @id @default(cuid())
+  scenarioId      String
+  modelVersionId  String?
+  probability     Float
+  impactScore     Float
+  riskScore       Float
+  confidence      Float
+  criticalEndpoints Int     @default(0)
+  timeToImpact    Int       @default(0)
+  reasoning       String
+  createdAt       DateTime  @default(now())
+  scenario        Scenario  @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+  modelVersion    ModelVersion? @relation(fields: [modelVersionId], references: [id], onDelete: SetNull)
+  paths           CascadePath[]
+  @@index([scenarioId, createdAt])
+}
+
+model CascadePath {
+  id             String            @id @default(cuid())
+  predictionId   String
+  nodeId         String
+  previousNodeId String?
+  hop            Int
+  delayMinutes   Int
+  probability    Float
+  reason         String
+  prediction     CascadePrediction @relation(fields: [predictionId], references: [id], onDelete: Cascade)
+  node           Node              @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  @@index([predictionId, hop])
+}
+
+model Intervention {
+  id                String             @id @default(cuid())
+  scenarioId        String
+  name              String
+  description       String
+  targetNodeId      String?
+  cost              Float              @default(0)
+  timeToEffect      Int                @default(30)
+  feasibility       Float              @default(0.8)
+  expectedReduction Float              @default(0)
+  status            InterventionStatus @default(PROPOSED)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  scenario          Scenario           @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+  candidates        InterventionCandidate[]
+  applied           AppliedIntervention?
+  @@index([scenarioId, status])
+}
+
+model InterventionCandidate {
+  id                  String       @id @default(cuid())
+  interventionId      String
+  dependencyId        String?
+  score               Float
+  riskReduction       Float
+  criticalityProtected Float
+  coverage            Float
+  rationale           String
+  intervention        Intervention @relation(fields: [interventionId], references: [id], onDelete: Cascade)
+  dependency          Dependency?  @relation(fields: [dependencyId], references: [id], onDelete: SetNull)
+  @@index([interventionId, score])
+}
+
+model AppliedIntervention {
+  id             String          @id @default(cuid())
+  interventionId String          @unique
+  baselineRunId  String?
+  afterRunId     String?
+  riskReduction  Float
+  appliedAt      DateTime        @default(now())
+  intervention   Intervention    @relation(fields: [interventionId], references: [id], onDelete: Cascade)
+  baselineRun    SimulationRun?  @relation("BaselineRun", fields: [baselineRunId], references: [id], onDelete: SetNull)
+  afterRun       SimulationRun?  @relation("AfterRun", fields: [afterRunId], references: [id], onDelete: SetNull)
+}
+
+model ModelVersion {
+  id          String   @id @default(cuid())
+  name        String
+  version     String
+  description String?
+  parameters  Json?
+  createdAt   DateTime @default(now())
+  predictions CascadePrediction[]
+  @@unique([name, version])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  projectId  String?
+  datasetId  String?
+  action     String
+  entityType String
+  entityId   String?
+  metadata   Json?
+  createdAt  DateTime @default(now())
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  project    Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  dataset    Dataset? @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  @@index([projectId, createdAt])
+  @@index([datasetId, createdAt])
+}
+
+model ErrorEvent {
+  id               String   @id @default(cuid())
+  userId           String?
+  datasetId        String?
+  scenarioId       String?
+  requestId        String?
+  severity         Severity
+  component        String
+  operation        String
+  message          String
+  technicalDetails String?
+  parameters       Json?
+  suggestedFix     String?
+  resolved         Boolean  @default(false)
+  resolution       String?
+  createdAt        DateTime @default(now())
+  user             User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  dataset          Dataset? @relation(fields: [datasetId], references: [id], onDelete: SetNull)
+  scenario         Scenario? @relation(fields: [scenarioId], references: [id], onDelete: SetNull)
+  @@index([createdAt, severity])
+  @@index([datasetId, resolved])
+}
